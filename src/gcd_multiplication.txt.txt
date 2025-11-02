@@ -1,0 +1,211 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company:
+// Engineer:
+// Create Date: 10/02/2025
+// Module Name: gcd_top (with datapath gcd_c and controller gcd_controller)
+// Description: GCD iterative design (datapath + controller) - fixed top wiring
+//////////////////////////////////////////////////////////////////////////////////
+
+// -----------------------------
+// Datapath
+// -----------------------------
+module gcd_c(
+    input  wire         clk,
+    input  wire         rst,
+    input  wire         lda,        // load A from data_in_a
+    input  wire         ldb,        // load B from data_in_b
+    input  wire         en_a,       // enable A <= A - B
+    input  wire         en_b,       // enable B <= B - A
+    input  wire [31:0]  data_in_a,  // external A input
+    input  wire [31:0]  data_in_b,  // external B input
+    input  wire         select_sub, // 0 = load data_in_*, 1 = load subtraction result
+    output wire         eq,
+    output wire         a_lt_b,
+    output wire         a_gt_b,
+    output wire [31:0]  out,        // gcd output (when done)
+    output wire [31:0]  a_out,
+    output wire [31:0]  b_out
+);
+
+    reg  [31:0] reg_a, reg_b;
+    wire [31:0] next_a, next_b;
+
+    // next values: either subtraction result
+    assign next_a = select_sub ? (reg_a - reg_b) : data_in_a;
+    assign next_b = select_sub ? (reg_b - reg_a) : data_in_b;
+
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            reg_a <= 32'b0;
+            reg_b <= 32'b0;
+        end else begin
+            if (lda)
+                reg_a <= data_in_a;
+            else if (en_a)
+                reg_a <= next_a;
+
+            if (ldb)
+                reg_b <= data_in_b;
+            else if (en_b)
+                reg_b <= next_b;
+        end
+    end
+
+    // status signals
+    assign a_gt_b = (reg_a > reg_b);
+    assign a_lt_b = (reg_a < reg_b);
+    assign eq     = (reg_a == reg_b);
+
+    // outputs
+    assign a_out = reg_a;
+    assign b_out = reg_b;
+    assign out   = reg_a; // when eq => reg_a (or reg_b) is the gcd
+
+endmodule
+
+
+// -----------------------------
+// Controller
+// -----------------------------
+module gcd_controller(
+    input  wire clk,
+    input  wire rst,
+    input  wire start,
+
+    // status inputs from datapath
+    input  wire a_lt_b,
+    input  wire a_gt_b,
+    input  wire eq,
+
+    // control outputs to datapath
+    output reg  done,
+    output reg  lda,
+    output reg  ldb,
+    output reg  en_a,
+    output reg  en_b,
+    output reg  select_sub
+);
+
+    // small FSM: IDLE/LOAD, COMPUTE, DONE
+    parameter s0 = 2'b00; // idle/load
+    parameter s1 = 2'b01; // compute (iterative subtract)
+    parameter s2 = 2'b10; // done
+
+    reg [1:0] c_state, n_state;
+
+    // state register
+    always @(posedge clk or posedge rst) begin
+        if (rst)
+            c_state <= s0;
+        else
+            c_state <= n_state;
+    end
+
+    // next-state + output (combinational)
+    always @(*) begin
+        // defaults
+        n_state    = c_state;
+        lda        = 1'b0;
+        ldb        = 1'b0;
+        en_a       = 1'b0;
+        en_b       = 1'b0;
+        select_sub = 1'b0;
+        done       = 1'b0;
+
+        case (c_state)
+            s0: begin
+                // load both A and B on start pulse
+                if (start) begin
+                    lda     = 1'b1;
+                    ldb     = 1'b1;
+                    n_state = s1;
+                end
+            end
+
+            s1: begin
+                // iterative subtraction until equal
+                if (eq) begin
+                    n_state = s2;
+                end else if (a_gt_b) begin
+                    // A > B : A <- A - B
+                    en_a       = 1'b1;
+                    select_sub = 1'b1;
+                    n_state    = s1;
+                end else if (a_lt_b) begin
+                    // B > A : B <- B - A
+                    en_b       = 1'b1;
+                    select_sub = 1'b1;
+                    n_state    = s1;
+                end
+            end
+
+            s2: begin
+                done = 1'b1;
+                // wait for start to be deasserted to go back to idle
+                if (!start)
+                    n_state = s0;
+            end
+
+            default: n_state = s0;
+        endcase
+    end
+
+endmodule
+
+
+
+// Top module:
+
+module gcd_top(
+    input  wire         clk,
+    input  wire         rst,
+    input  wire         start,
+    input  wire [31:0]  data_in_a, // user A input
+    input  wire [31:0]  data_in_b, // user B input
+
+    output wire         done,
+    output wire [31:0]  out
+);
+
+    // Internal wires between controller and datapath
+    wire lda, ldb, en_a, en_b, select_sub;
+    wire eq, a_gt_b, a_lt_b;
+    wire [31:0] a_out, b_out;
+
+    // Instantiate datapath 
+    gcd_c DP (
+        .clk        (clk),
+        .rst        (rst),
+        .lda        (lda),
+        .ldb        (ldb),
+        .en_a       (en_a),
+        .en_b       (en_b),
+        .data_in_a  (data_in_a),
+        .data_in_b  (data_in_b),
+        .select_sub (select_sub),
+        .eq         (eq),
+        .a_lt_b     (a_lt_b),
+        .a_gt_b     (a_gt_b),
+        .out        (out),
+        .a_out      (a_out),
+        .b_out      (b_out)
+    );
+
+    // Instantiate controller
+    gcd_controller CP (
+        .clk        (clk),
+        .rst        (rst),
+        .start      (start),
+        .a_lt_b     (a_lt_b),
+        .a_gt_b     (a_gt_b),
+        .eq         (eq),
+        .done       (done),
+        .lda        (lda),
+        .ldb        (ldb),
+        .en_a       (en_a),
+        .en_b       (en_b),
+        .select_sub (select_sub)
+    );
+
+endmodule

@@ -1,0 +1,74 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 10/03/2025 11:12:30 AM
+// Design Name: 
+// Module Name: test_gcd
+// Project Name: 
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
+
+module test_gcd;
+    reg clk;
+    reg rst;
+    reg [31:0] data_in_a, data_in_b;
+    reg start;
+    wire done;
+    wire [31:0] out;
+
+//DUT
+    gcd_top uut ( .clk(clk), .rst(rst), .start(start), .data_in_a(data_in_a), .data_in_b(data_in_b), .done(done), .out(out));
+    
+    //clk generation
+    initial clk = 0;
+    always #5 clk = ~clk;
+    
+    
+    initial begin
+        // Dump waveforms  
+        $dumpfile("gcd_top_tb.vcd");
+        $dumpvars(0, gcd_top);
+        
+        
+        clk = 0; rst = 1; start = 0; data_in_a = 0; data_in_b = 0;
+        
+        
+        //reset hold
+        #20 rst = 0; 
+        
+        
+        //test 1
+        
+        data_in_a = 48; data_in_b = 18; start = 1;
+        #10 start = 0;
+        wait(done);
+        #20;
+        
+        //test 2
+        data_in_a = 27; data_in_b = 9;
+        start = 1; #10 start = 0;
+        wait(done);
+        #20;
+        
+        //test 3
+        data_in_a = 21; data_in_b = 14;
+        start = 1; #10 start = 0;
+        wait(done);
+        #20;
+        
+        $stop;
+     end
+     
+endmodule
